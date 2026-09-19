@@ -1,0 +1,11 @@
+event_id,event_date,landslide_category,landslide_trigger,landslide_size,admin_division_name,longitude,latitude,state_clean,risk_level
+1,2023-06-12,landslide,rainfall,medium,Kamrup,91.7362,26.1445,assam,high
+2,2023-07-04,rockslide,rainfall,large,Cachar,92.7789,24.8333,assam,high
+3,2023-05-20,landslide,unknown,small,Karimganj,92.356,24.8697,assam,medium
+4,2023-08-15,landslide,rainfall,medium,East Khasi Hills,91.8933,25.5788,meghalaya,high
+5,2023-09-01,mudslide,rainfall,small,West Khasi Hills,91.2833,25.5667,meghalaya,low
+6,2023-06-28,landslide,rainfall,large,Kohima,94.1077,25.6751,nagaland,high
+7,2023-07-19,rockslide,unknown,medium,Aizawl,92.7176,23.7271,mizoram,medium
+8,2023-08-30,landslide,rainfall,small,Imphal West,93.9368,24.8170,manipur,low
+9,2023-05-05,landslide,rainfall,medium,East Sikkim,88.6167,27.3389,sikkim,medium
+10,2023-09-10,landslide,rainfall,large,West Tripura,91.2868,23.8315,tripura,high
