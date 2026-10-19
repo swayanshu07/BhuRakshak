@@ -1,53 +1,283 @@
-import pandas as pd
-from typing import Optional
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from app.risk_store import get_store, risk_level, LAND_COVER, MAX_MATCH_DEG
+﻿import pandas as pd
 
-router = APIRouter(prefix="/predict", tags=["predict"])
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
+
+from pydantic import BaseModel
+
+from app.risk_store import (
+    get_store,
+    risk_level,
+    LAND_COVER,
+)
+
+from app.geospatial_engine import (
+    extract_location_features,
+)
+
+
+router = APIRouter(
+    prefix="/predict",
+    tags=["predict"]
+)
 
 
 class LatLonRequest(BaseModel):
+
     lat: float
     lon: float
-    # optional what-if rainfall (mm); defaults to the scenario values
+
+    # Optional what-if rainfall.
+    # If omitted, the prototype scenario values are used.
     rainfall_1d: Optional[float] = None
     rainfall_3d: Optional[float] = None
     rainfall_7d: Optional[float] = None
 
 
 @router.post("/latlon")
-def predict_latlon(data: LatLonRequest):
+def predict_latlon(
+    data: LatLonRequest
+):
+
+    # ========================================================
+    # LOAD MODEL STORE
+    # ========================================================
+
     s = get_store()
-    dist, i = s.tree.query([data.lon, data.lat])
-    if dist > MAX_MATCH_DEG:
-        raise HTTPException(status_code=404, detail="Location is outside the prototype grid coverage")
 
-    row = s.df.iloc[int(i)]
-    vals = {f: float(row[f]) for f in s.features}
-    overridden = False
-    for k in ("rainfall_1d", "rainfall_3d", "rainfall_7d"):
-        v = getattr(data, k)
-        if v is not None:
-            vals[k] = v
-            overridden = True
 
-    prob = float(s.model.predict_proba(pd.DataFrame([vals], columns=s.features))[0][1])
+    # ========================================================
+    # EXTRACT REAL LOCATION FEATURES
+    # ========================================================
+
+    try:
+
+        geo = extract_location_features(
+            lat=data.lat,
+            lon=data.lon,
+        )
+
+    except ValueError as exc:
+
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to extract geospatial "
+                f"features: {exc}"
+            ),
+        )
+
+
+    # ========================================================
+    # RAINFALL
+    # ========================================================
+
+    rainfall_1d = (
+        data.rainfall_1d
+        if data.rainfall_1d is not None
+        else s.scenario["rainfall_1d"]
+    )
+
+    rainfall_3d = (
+        data.rainfall_3d
+        if data.rainfall_3d is not None
+        else s.scenario["rainfall_3d"]
+    )
+
+    rainfall_7d = (
+        data.rainfall_7d
+        if data.rainfall_7d is not None
+        else s.scenario["rainfall_7d"]
+    )
+
+
+    overridden = any([
+        data.rainfall_1d is not None,
+        data.rainfall_3d is not None,
+        data.rainfall_7d is not None,
+    ])
+
+
+    # ========================================================
+    # BUILD EXACT 8 MODEL FEATURES
+    # ========================================================
+
+    vals = {
+
+        "rainfall_1d":
+            float(rainfall_1d),
+
+        "rainfall_3d":
+            float(rainfall_3d),
+
+        "rainfall_7d":
+            float(rainfall_7d),
+
+        "elevation":
+            float(geo["elevation"]),
+
+        "slope":
+            float(geo["slope"]),
+
+        "land_cover":
+            float(geo["land_cover"]),
+
+        "distance_to_mine_m":
+            float(geo["distance_to_mine_m"]),
+
+        "distance_to_river_m":
+            float(geo["distance_to_river_m"]),
+    }
+
+
+    # ========================================================
+    # VERIFY FEATURE ORDER
+    # ========================================================
+
+    missing = [
+        feature
+        for feature in s.features
+        if feature not in vals
+    ]
+
+    if missing:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Model features missing: "
+                + ", ".join(missing)
+            ),
+        )
+
+
+    model_input = pd.DataFrame(
+        [
+            {
+                feature: vals[feature]
+                for feature in s.features
+            }
+        ]
+    )
+
+
+    # ========================================================
+    # MODEL PREDICTION
+    # ========================================================
+
+    try:
+
+        prob = float(
+            s.model.predict_proba(
+                model_input
+            )[0][1]
+        )
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Model prediction failed: "
+                f"{exc}"
+            ),
+        )
+
+
+    # ========================================================
+    # RESPONSE
+    # ========================================================
+
     return {
-        "probability": round(prob, 4),
-        "risk_level": risk_level(prob),
-        "mode": "what-if rainfall" if overridden else "scenario",
-        "matched_cell": {"lat": round(float(row["latitude"]), 5),
-                         "lon": round(float(row["longitude"]), 5),
-                         "distance_km": round(float(dist) * 111, 2)},
+
+        "latitude":
+            round(float(data.lat), 6),
+
+        "longitude":
+            round(float(data.lon), 6),
+
+        "probability":
+            round(prob, 4),
+
+        "risk_level":
+            risk_level(prob),
+
+        "mode":
+            (
+                "what-if rainfall"
+                if overridden
+                else "scenario"
+            ),
+
         "factors": {
-            "rainfall_1d_mm": round(vals["rainfall_1d"], 1),
-            "rainfall_3d_mm": round(vals["rainfall_3d"], 1),
-            "rainfall_7d_mm": round(vals["rainfall_7d"], 1),
-            "elevation_m": round(vals["elevation"]),
-            "slope_deg": round(vals["slope"], 1),
-            "land_cover": LAND_COVER.get(int(vals["land_cover"]), "Unknown"),
-            "river_distance_km": round(vals["distance_to_river_m"] / 1000, 1),
-            "mine_distance_km": round(vals["distance_to_mine_m"] / 1000, 1),
+
+            "rainfall_1d_mm":
+                round(
+                    float(rainfall_1d),
+                    2
+                ),
+
+            "rainfall_3d_mm":
+                round(
+                    float(rainfall_3d),
+                    2
+                ),
+
+            "rainfall_7d_mm":
+                round(
+                    float(rainfall_7d),
+                    2
+                ),
+
+            "elevation_m":
+                round(
+                    float(geo["elevation"]),
+                    2
+                ),
+
+            "slope_deg":
+                round(
+                    float(geo["slope"]),
+                    2
+                ),
+
+            "land_cover":
+                LAND_COVER.get(
+                    int(geo["land_cover"]),
+                    "Unknown"
+                ),
+
+            "land_cover_code":
+                int(
+                    geo["land_cover"]
+                ),
+
+            "river_distance_km":
+                round(
+                    float(
+                        geo[
+                            "distance_to_river_m"
+                        ]
+                    ) / 1000,
+                    2
+                ),
+
+            "mine_distance_km":
+                round(
+                    float(
+                        geo[
+                            "distance_to_mine_m"
+                        ]
+                    ) / 1000,
+                    2
+                ),
         },
     }

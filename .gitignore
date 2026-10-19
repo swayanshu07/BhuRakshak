@@ -1,1 +1,11 @@
 data/BhuRakshak_NER_Risk_Map_Prototype_8Feature.csv 
+
+.venv/
+__pycache__/
+*.db
+
+.venv/
+__pycache__/
+*.db
+data/geodata/
+*_backup.txt
